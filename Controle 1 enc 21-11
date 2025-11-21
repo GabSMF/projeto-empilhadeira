@@ -1,0 +1,111 @@
+#define DIAMETRO 50
+#define ENCODER_PIN 2
+#define DENTES 32
+#define PULSOS_POR_ROT 34.0f
+#define t_dl 200 // Tempo de amostragem em ms
+#define PI 3.14159
+
+// Pinos da Ponte H
+#define PINO_IN1 12  
+#define PINO_IN2 13 
+#define PINO_PWM 6
+
+
+// Variáveis do Encoder e Velocidade
+volatile long encoder = 0; // Mudei para long para evitar overflow rápido
+long ant_encoder = 0;
+float rpm_atual = 0;
+unsigned long t_anterior = 0;
+
+// --- Variáveis de Controle ---
+float setpoint_rpm = 50;   // A velocidade que você QUER (ex: 100 ou -100)
+float Kp = 1.5;           // Ganho Proporcional (AJUSTE ESTE VALOR)
+float erro = 0;
+float sinal_controle = 0; // Valor calculado para o PWM
+
+void incrementa_encoder() {
+  encoder++;
+}
+
+// Função para acionar os motores baseada no sinal de controle (+ ou -)
+void acionar_motor(int acao) {
+  // Limita o PWM entre -255 e 255 (Saturação)
+  if (acao > 255) acao = 255;
+  if (acao < -255) acao = -255;
+
+  if (acao > 0) {
+    // Mover para FRENTE
+    digitalWrite(PINO_IN1, HIGH);
+    digitalWrite(PINO_IN2, LOW);
+    analogWrite(PINO_PWM, acao);
+  } 
+  else if (acao < 0) {
+    // Mover para TRÁS
+    digitalWrite(PINO_IN1, LOW);
+    digitalWrite(PINO_IN2, HIGH);
+    analogWrite(PINO_PWM, abs(acao)); // PWM deve ser positivo
+  } 
+  else {
+    // Parar
+    digitalWrite(PINO_IN1, LOW);
+    digitalWrite(PINO_IN2, LOW);
+    analogWrite(PINO_PWM, 0);
+  }
+}
+
+void setup() {
+  Serial.begin(9600);
+  pinMode(ENCODER_PIN, INPUT);
+  attachInterrupt(digitalPinToInterrupt(ENCODER_PIN), incrementa_encoder, RISING);
+  
+  pinMode(PINO_IN1, OUTPUT);
+  pinMode(PINO_IN2, OUTPUT);
+  pinMode(PINO_PWM, OUTPUT);
+  
+  t_anterior = millis();
+  
+  // DEFINA SUA VELOCIDADE ALVO AQUI (Ex: 120 RPM)
+  setpoint_rpm = 120; 
+}
+
+void loop() {
+  // O controle deve rodar no mesmo ritmo da leitura de velocidade
+  if (millis() - t_anterior >= t_dl) {
+    
+    // 1. Calcular RPM (magnitude, sempre positivo pois o encoder só soma)
+    long delta_encoder = encoder - ant_encoder;
+    ant_encoder = encoder;
+    
+    // Cálculo do RPM (sem sinal ainda)
+    float rot = delta_encoder / PULSOS_POR_ROT;
+    float rpm_medido = rot * (60000.0 / t_dl);
+
+    // 2. Determinar o sinal do RPM atual
+    // Como seu encoder é simples (1 pino), ele não sabe se está indo para trás.
+    // Temos que assumir que ele está indo na direção que mandamos o motor ir.
+    if (sinal_controle < 0) {
+        rpm_atual = -rpm_medido;
+    } else {
+        rpm_atual = rpm_medido;
+    }
+
+    // 3. Cálculo do Erro
+    erro = setpoint_rpm - rpm_atual;
+
+    // 4. Controlador Proporcional (P)
+    sinal_controle = Kp * erro;
+
+    // 5. Aplicar no Motor
+    acionar_motor((int)sinal_controle);
+
+    // Debug para o Serial Plotter
+    Serial.print("Alvo:");
+    Serial.print(setpoint_rpm);
+    Serial.print(" RPM_Atual:");
+    Serial.print(rpm_atual);
+    Serial.print(" PWM_Calc:");
+    Serial.println(sinal_controle);
+    
+    t_anterior = millis();
+  }
+}
