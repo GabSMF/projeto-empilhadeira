@@ -1,0 +1,237 @@
+#include <Arduino.h>
+
+// --------------------------- PINOS ---------------------------
+// Motor 1 (Esquerdo)
+#define IN1_L 7
+#define IN2_L 8
+#define EN_L  5
+#define ENC_L 3
+
+// Motor 2 (Direito)
+#define IN1_R 12
+#define IN2_R 13
+#define EN_R  6
+#define ENC_R 2
+
+// --------------------------- ENCODER ---------------------------
+const float PPR = 64.0;
+
+// Esquerdo
+volatile unsigned long pulseL = 0;
+volatile unsigned long lastL = 0;
+
+// Direito
+volatile unsigned long pulseR = 0;
+volatile unsigned long lastR = 0;
+
+const int MIN_PULSE_WIDTH = 500;
+
+// ---------------------- TABELAS DE CALIBRAÇÃO ------------------
+float rpmTable[] = { 0, 207, 295, 375, 445, 505, 560, 608, 645, 680, 713,
+                     735, 755, 776, 793, 808, 830, 843, 854, 865, 875, 910 };
+
+int pwmTable[]  = { 0, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150,
+                    160, 170, 180, 190, 200, 210, 220, 230, 240, 250, 255 };
+
+const int tableSize = sizeof(rpmTable) / sizeof(rpmTable[0]);
+
+// ---------------------- FILTRO MÉDIA MÓVEL ---------------------
+const int MOV = 20;
+
+// Esquerdo
+float movL[MOV];
+int idxL = 0;
+float sumL = 0;
+float rpmL = 0;
+
+// Direito
+float movR[MOV];
+int idxR = 0;
+float sumR = 0;
+float rpmR = 0;
+
+// --------------------------- PID ----------------------------
+float Kp = 2.0, Ki = 0.5, Kd = 0.01;
+
+float eL = 0, iL = 0, dL = 0, lastEL = 0;
+float eR = 0, iR = 0, dR = 0, lastER = 0;
+
+float outL = 0;
+float outR = 0;
+
+long prevTime = 0;
+long sampleInterval = 40;
+
+// ----------------------- RAMPA ------------------------
+float targetRPM = 0;
+float rampRPM   = 0;
+float acceleration = 10;
+
+// --------------------------- ISR ---------------------------
+void readL() {
+  unsigned long now = micros();
+  if (now - lastL > MIN_PULSE_WIDTH) {
+    pulseL++;
+    lastL = now;
+  }
+}
+
+void readR() {
+  unsigned long now = micros();
+  if (now - lastR > MIN_PULSE_WIDTH) {
+    pulseR++;
+    lastR = now;
+  }
+}
+
+// --------------------------- SETUP ---------------------------
+void setup() {
+  Serial.begin(115200);
+
+  pinMode(IN1_L, OUTPUT);
+  pinMode(IN2_L, OUTPUT);
+  pinMode(EN_L, OUTPUT);
+  pinMode(ENC_L, INPUT_PULLUP);
+
+  pinMode(IN1_R, OUTPUT);
+  pinMode(IN2_R, OUTPUT);
+  pinMode(EN_R, OUTPUT);
+  pinMode(ENC_R, INPUT_PULLUP);
+
+  attachInterrupt(digitalPinToInterrupt(ENC_L), readL, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(ENC_R), readR, CHANGE);
+
+  for (int i=0; i<MOV; i++) {
+    movL[i] = 0;
+    movR[i] = 0;
+  }
+
+  prevTime = millis();
+
+  Serial.println("Sistema iniciado — 2 motores sincronizados");
+}
+
+// -------------------------- FUNÇÃO PWM --------------------------
+int rpmToPwm(float rpmTarget) {
+  float absRPM = abs(rpmTarget);
+
+  if (absRPM <= rpmTable[0]) return 0;
+
+  if (absRPM >= rpmTable[tableSize - 1]) {
+    int maxPWM = pwmTable[tableSize - 1];
+    return (rpmTarget > 0) ? maxPWM : -maxPWM;
+  }
+
+  for (int i = 0; i < tableSize - 1; i++) {
+    if (absRPM >= rpmTable[i] && absRPM <= rpmTable[i+1]) {
+      float rR = rpmTable[i+1] - rpmTable[i];
+      float rP = pwmTable[i+1] - pwmTable[i];
+      float p = (absRPM - rpmTable[i]) / rR;
+      int pwm = pwmTable[i] + (rP * p);
+      return (rpmTarget > 0) ? pwm : -pwm;
+    }
+  }
+  return 0;
+}
+
+// --------------------- CONTROLE DO MOTOR ---------------------
+void motorL(int pwm) {
+  pwm = constrain(pwm, -255, 255);
+  if (pwm >= 0) {
+    digitalWrite(IN1_L, LOW);
+    digitalWrite(IN2_L, HIGH);
+    analogWrite(EN_L, pwm);
+  } else {
+    digitalWrite(IN1_L, HIGH);
+    digitalWrite(IN2_L, LOW);
+    analogWrite(EN_L, -pwm);
+  }
+}
+
+void motorR(int pwm) {
+  pwm = constrain(pwm, -255, 255);
+  if (pwm >= 0) {
+    digitalWrite(IN1_R, LOW);
+    digitalWrite(IN2_R, HIGH);
+    analogWrite(EN_R, pwm);
+  } else {
+    digitalWrite(IN1_R, HIGH);
+    digitalWrite(IN2_R, LOW);
+    analogWrite(EN_R, -pwm);
+  }
+}
+
+// --------------------------- LOOP ---------------------------
+void loop() {
+
+  // COMANDO SERIAL
+  if (Serial.available()) {
+    targetRPM = Serial.parseFloat();
+    Serial.print("Nova meta RPM = "); Serial.println(targetRPM);
+  }
+
+  unsigned long now = millis();
+
+  if (now - prevTime >= sampleInterval) {
+
+    // ----- CALCULA RPM ------
+    long dt = now - prevTime;
+
+    noInterrupts();
+    unsigned long pL = pulseL; pulseL = 0;
+    unsigned long pR = pulseR; pulseR = 0;
+    interrupts();
+
+    float instL = ((float)pL / PPR) * (60000.0 / dt);
+    float instR = ((float)pR / PPR) * (60000.0 / dt);
+
+    // ----- MÉDIA MÓVEL ------
+    sumL -= movL[idxL];
+    movL[idxL] = instL;
+    sumL += instL;
+    idxL = (idxL + 1) % MOV;
+    rpmL = sumL / MOV;
+
+    sumR -= movR[idxR];
+    movR[idxR] = instR;
+    sumR += instR;
+    idxR = (idxR + 1) % MOV;
+    rpmR = sumR / MOV;
+
+    // ----- RAMPA ------
+    float diff = targetRPM - rampRPM;
+    if (abs(diff) > acceleration)
+      rampRPM += (diff > 0 ? acceleration : -acceleration);
+    else
+      rampRPM = targetRPM;
+
+    // ----- FEEDFORWARD ------
+    int ff = rpmToPwm(rampRPM);
+
+    // ----- PID ESQUERDO ------
+    eL = rampRPM - rpmL;
+    iL += eL * (dt / 1000.0);
+    dL = (eL - lastEL) / (dt / 1000.0);
+    outL = Kp*eL + Ki*iL + Kd*dL + ff;
+    lastEL = eL;
+
+    // ----- PID DIREITO ------
+    eR = rampRPM - rpmR;
+    iR += eR * (dt / 1000.0);
+    dR = (eR - lastER) / (dt / 1000.0);
+    outR = Kp*eR + Ki*iR + Kd*dR + ff;
+    lastER = eR;
+
+    // ----- APLICA PWM ------
+    motorL(outL);
+    motorR(outR);
+
+    // MONITOR SERIAL
+    Serial.print("T="); Serial.print(targetRPM);
+    Serial.print("  Rampa="); Serial.print(rampRPM);
+    Serial.print("  L_RPM="); Serial.print(rpmL);
+    Serial.print("  R_RPM="); Serial.println(rpmR);
+
+    prevTime = now;
+  }
+}
