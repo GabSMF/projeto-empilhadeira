@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Robot Control</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #2c3e50;
+            color: #ecf0f1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+        }
+        h1 {
+            margin-bottom: 20px;
+        }
+        .control-panel {
+            display: grid;
+            grid-template-columns: repeat(3, 100px);
+            grid-template-rows: repeat(3, 100px);
+            gap: 10px;
+        }
+        .btn {
+            background-color: #34495e;
+            border: none;
+            border-radius: 10px;
+            color: white;
+            font-size: 24px;
+            cursor: pointer;
+            transition: background-color 0.2s, transform 0.1s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            user-select: none;
+        }
+        .btn:active, .btn.active {
+            background-color: #e74c3c;
+            transform: scale(0.95);
+        }
+        .btn:hover {
+            background-color: #46627f;
+        }
+        .btn-stop {
+            background-color: #c0392b;
+        }
+        .btn-stop:hover {
+            background-color: #e74c3c;
+        }
+        
+        /* Grid Positioning */
+        .up { grid-column: 2; grid-row: 1; }
+        .left { grid-column: 1; grid-row: 2; }
+        .stop { grid-column: 2; grid-row: 2; }
+        .right { grid-column: 3; grid-row: 2; }
+        .down { grid-column: 2; grid-row: 3; }
+        
+        .status {
+            margin-top: 20px;
+            font-size: 1.2em;
+            height: 1.5em;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Robot Control</h1>
+
+    <div class="control-panel">
+        <button class="btn up" id="btn-forward" onmousedown="sendCommand('forward')" onmouseup="sendCommand('stop')" ontouchstart="sendCommand('forward')" ontouchend="sendCommand('stop')">▲</button>
+        <button class="btn left" id="btn-left" onmousedown="sendCommand('left')" onmouseup="sendCommand('stop')" ontouchstart="sendCommand('left')" ontouchend="sendCommand('stop')">◄</button>
+        <button class="btn stop btn-stop" id="btn-stop" onclick="sendCommand('stop')">■</button>
+        <button class="btn right" id="btn-right" onmousedown="sendCommand('right')" onmouseup="sendCommand('stop')" ontouchstart="sendCommand('right')" ontouchend="sendCommand('stop')">►</button>
+        <button class="btn down" id="btn-backward" onmousedown="sendCommand('backward')" onmouseup="sendCommand('stop')" ontouchstart="sendCommand('backward')" ontouchend="sendCommand('stop')">▼</button>
+    </div>
+
+    <div class="status" id="status-text">Ready</div>
+
+    <script>
+        let lastCommand = '';
+
+        function sendCommand(direction) {
+            // Avoid spamming the same command if holding key, but we want to send 'stop' always
+            if (direction === lastCommand && direction !== 'stop') return;
+            
+            lastCommand = direction;
+            updateStatus(direction);
+
+            fetch(`/move/${direction}`, {
+                method: 'POST'
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('Success:', data);
+            })
+            .catch((error) => {
+                console.error('Error:', error);
+                document.getElementById('status-text').innerText = 'Error connecting to server';
+            });
+        }
+
+        function updateStatus(direction) {
+            const statusEl = document.getElementById('status-text');
+            const map = {
+                'forward': 'Moving Forward',
+                'backward': 'Moving Backward',
+                'left': 'Turning Left',
+                'right': 'Turning Right',
+                'stop': 'Stopped'
+            };
+            statusEl.innerText = map[direction] || 'Ready';
+        }
+
+        // Keyboard Support
+        document.addEventListener('keydown', (e) => {
+            if (e.repeat) return;
+            switch(e.key) {
+                case 'ArrowUp': 
+                    document.getElementById('btn-forward').classList.add('active');
+                    sendCommand('forward'); 
+                    break;
+                case 'ArrowDown': 
+                    document.getElementById('btn-backward').classList.add('active');
+                    sendCommand('backward'); 
+                    break;
+                case 'ArrowLeft': 
+                    document.getElementById('btn-left').classList.add('active');
+                    sendCommand('left'); 
+                    break;
+                case 'ArrowRight': 
+                    document.getElementById('btn-right').classList.add('active');
+                    sendCommand('right'); 
+                    break;
+                case ' ': // Spacebar for stop
+                    document.getElementById('btn-stop').classList.add('active');
+                    sendCommand('stop');
+                    break;
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            switch(e.key) {
+                case 'ArrowUp': 
+                    document.getElementById('btn-forward').classList.remove('active');
+                    sendCommand('stop'); 
+                    break;
+                case 'ArrowDown': 
+                    document.getElementById('btn-backward').classList.remove('active');
+                    sendCommand('stop'); 
+                    break;
+                case 'ArrowLeft': 
+                    document.getElementById('btn-left').classList.remove('active');
+                    sendCommand('stop'); 
+                    break;
+                case 'ArrowRight': 
+                    document.getElementById('btn-right').classList.remove('active');
+                    sendCommand('stop'); 
+                    break;
+                case ' ':
+                    document.getElementById('btn-stop').classList.remove('active');
+                    break;
+            }
+        });
+    </script>
+</body>
+</html>
