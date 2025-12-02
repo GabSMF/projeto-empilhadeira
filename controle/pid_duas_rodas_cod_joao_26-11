@@ -4,13 +4,13 @@
 // Motor 1 (Esquerdo)
 #define IN1_L 7
 #define IN2_L 8
-#define EN_L  5
+#define EN_L 5
 #define ENC_L 3
 
 // Motor 2 (Direito)
 #define IN1_R 12
 #define IN2_R 13
-#define EN_R  6
+#define EN_R 6
 #define ENC_R 2
 
 // --------------------------- ENCODER ---------------------------
@@ -27,11 +27,11 @@ volatile unsigned long lastR = 0;
 const int MIN_PULSE_WIDTH = 500;
 
 // ---------------------- TABELAS DE CALIBRAÇÃO ------------------
-float rpmTable[] = { 0, 207, 295, 375, 445, 505, 560, 608, 645, 680, 713,
-                     735, 755, 776, 793, 808, 830, 843, 854, 865, 875, 910 };
+float rpmTable[] = {0,   207, 295, 375, 445, 505, 560, 608, 645, 680, 713,
+                    735, 755, 776, 793, 808, 830, 843, 854, 865, 875, 910};
 
-int pwmTable[]  = { 0, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150,
-                    160, 170, 180, 190, 200, 210, 220, 230, 240, 250, 255 };
+int pwmTable[] = {0,   60,  70,  80,  90,  100, 110, 120, 130, 140, 150,
+                  160, 170, 180, 190, 200, 210, 220, 230, 240, 250, 255};
 
 const int tableSize = sizeof(rpmTable) / sizeof(rpmTable[0]);
 
@@ -63,9 +63,12 @@ long prevTime = 0;
 long sampleInterval = 40;
 
 // ----------------------- RAMPA ------------------------
-float targetRPM = 0;
-float rampRPM   = 0;
+float targetRPM_L = 0;
+float targetRPM_R = 0;
+float rampRPM_L = 0;
+float rampRPM_R = 0;
 float acceleration = 10;
+const float BASE_RPM = 150.0; // Velocidade padrao para os movimentos
 
 // --------------------------- ISR ---------------------------
 void readL() {
@@ -101,21 +104,22 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(ENC_L), readL, CHANGE);
   attachInterrupt(digitalPinToInterrupt(ENC_R), readR, CHANGE);
 
-  for (int i=0; i<MOV; i++) {
+  for (int i = 0; i < MOV; i++) {
     movL[i] = 0;
     movR[i] = 0;
   }
 
   prevTime = millis();
 
-  Serial.println("Sistema iniciado — 2 motores sincronizados");
+  Serial.println("Sistema iniciado — Controle Direcional (F, B, L, R, S)");
 }
 
 // -------------------------- FUNÇÃO PWM --------------------------
 int rpmToPwm(float rpmTarget) {
   float absRPM = abs(rpmTarget);
 
-  if (absRPM <= rpmTable[0]) return 0;
+  if (absRPM <= rpmTable[0])
+    return 0;
 
   if (absRPM >= rpmTable[tableSize - 1]) {
     int maxPWM = pwmTable[tableSize - 1];
@@ -123,9 +127,9 @@ int rpmToPwm(float rpmTarget) {
   }
 
   for (int i = 0; i < tableSize - 1; i++) {
-    if (absRPM >= rpmTable[i] && absRPM <= rpmTable[i+1]) {
-      float rR = rpmTable[i+1] - rpmTable[i];
-      float rP = pwmTable[i+1] - pwmTable[i];
+    if (absRPM >= rpmTable[i] && absRPM <= rpmTable[i + 1]) {
+      float rR = rpmTable[i + 1] - rpmTable[i];
+      float rP = pwmTable[i + 1] - pwmTable[i];
       float p = (absRPM - rpmTable[i]) / rR;
       int pwm = pwmTable[i] + (rP * p);
       return (rpmTarget > 0) ? pwm : -pwm;
@@ -166,8 +170,41 @@ void loop() {
 
   // COMANDO SERIAL
   if (Serial.available()) {
-    targetRPM = Serial.parseFloat();
-    Serial.print("Nova meta RPM = "); Serial.println(targetRPM);
+    char cmd = Serial.read();
+
+    // Ignora caracteres de nova linha ou retorno de carro
+    if (cmd != '\n' && cmd != '\r') {
+      switch (toupper(cmd)) {
+      case 'F': // Frente
+        targetRPM_L = BASE_RPM;
+        targetRPM_R = BASE_RPM;
+        Serial.println("Comando: FRENTE");
+        break;
+      case 'B': // Tras
+        targetRPM_L = -BASE_RPM;
+        targetRPM_R = -BASE_RPM;
+        Serial.println("Comando: TRAS");
+        break;
+      case 'L': // Esquerda (Giro no eixo)
+        targetRPM_L = -BASE_RPM;
+        targetRPM_R = BASE_RPM;
+        Serial.println("Comando: ESQUERDA");
+        break;
+      case 'R': // Direita (Giro no eixo)
+        targetRPM_L = BASE_RPM;
+        targetRPM_R = -BASE_RPM;
+        Serial.println("Comando: DIREITA");
+        break;
+      case 'S': // Parar
+        targetRPM_L = 0;
+        targetRPM_R = 0;
+        Serial.println("Comando: PARAR");
+        break;
+      default:
+        // Opcional: Implementar ajuste fino de velocidade ou ignorar
+        break;
+      }
+    }
   }
 
   unsigned long now = millis();
@@ -178,8 +215,10 @@ void loop() {
     long dt = now - prevTime;
 
     noInterrupts();
-    unsigned long pL = pulseL; pulseL = 0;
-    unsigned long pR = pulseR; pulseR = 0;
+    unsigned long pL = pulseL;
+    pulseL = 0;
+    unsigned long pR = pulseR;
+    pulseR = 0;
     interrupts();
 
     float instL = ((float)pL / PPR) * (60000.0 / dt);
@@ -198,28 +237,36 @@ void loop() {
     idxR = (idxR + 1) % MOV;
     rpmR = sumR / MOV;
 
-    // ----- RAMPA ------
-    float diff = targetRPM - rampRPM;
-    if (abs(diff) > acceleration)
-      rampRPM += (diff > 0 ? acceleration : -acceleration);
+    // ----- RAMPA ESQUERDA ------
+    float diffL = targetRPM_L - rampRPM_L;
+    if (abs(diffL) > acceleration)
+      rampRPM_L += (diffL > 0 ? acceleration : -acceleration);
     else
-      rampRPM = targetRPM;
+      rampRPM_L = targetRPM_L;
+
+    // ----- RAMPA DIREITA ------
+    float diffR = targetRPM_R - rampRPM_R;
+    if (abs(diffR) > acceleration)
+      rampRPM_R += (diffR > 0 ? acceleration : -acceleration);
+    else
+      rampRPM_R = targetRPM_R;
 
     // ----- FEEDFORWARD ------
-    int ff = rpmToPwm(rampRPM);
+    int ffL = rpmToPwm(rampRPM_L);
+    int ffR = rpmToPwm(rampRPM_R);
 
     // ----- PID ESQUERDO ------
-    eL = rampRPM - rpmL;
+    eL = rampRPM_L - rpmL;
     iL += eL * (dt / 1000.0);
     dL = (eL - lastEL) / (dt / 1000.0);
-    outL = Kp*eL + Ki*iL + Kd*dL + ff;
+    outL = Kp * eL + Ki * iL + Kd * dL + ffL;
     lastEL = eL;
 
     // ----- PID DIREITO ------
-    eR = rampRPM - rpmR;
+    eR = rampRPM_R - rpmR;
     iR += eR * (dt / 1000.0);
     dR = (eR - lastER) / (dt / 1000.0);
-    outR = Kp*eR + Ki*iR + Kd*dR + ff;
+    outR = Kp * eR + Ki * iR + Kd * dR + ffR;
     lastER = eR;
 
     // ----- APLICA PWM ------
@@ -227,10 +274,17 @@ void loop() {
     motorR(outR);
 
     // MONITOR SERIAL
-    Serial.print("T="); Serial.print(targetRPM);
-    Serial.print("  Rampa="); Serial.print(rampRPM);
-    Serial.print("  L_RPM="); Serial.print(rpmL);
-    Serial.print("  R_RPM="); Serial.println(rpmR);
+    // Exibe apenas se houver movimento ou comando recente para nao poluir
+    // demais, ou mantem continuo para debug. Mantendo continuo como no
+    // original.
+    Serial.print("T_L=");
+    Serial.print(targetRPM_L);
+    Serial.print(" T_R=");
+    Serial.print(targetRPM_R);
+    Serial.print(" R_L=");
+    Serial.print(rpmL);
+    Serial.print(" R_R=");
+    Serial.println(rpmR);
 
     prevTime = now;
   }
