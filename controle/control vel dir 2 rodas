@@ -1,0 +1,311 @@
+#include <Arduino.h>
+
+// --------------------------- PINOS ---------------------------
+// Motor 1 (Esquerdo)
+#define IN1_L 9
+#define IN2_L 8
+#define EN_L 5
+#define ENC_L 3
+
+// Motor 2 (Direito)
+#define IN1_R 12
+#define IN2_R 13
+#define EN_R 6
+#define ENC_R 2
+
+// --------------------------- ENCODER ---------------------------
+const float PPR = 64.0;
+
+// Esquerdo
+volatile unsigned long pulseL = 0;
+volatile unsigned long lastL = 0;
+
+// Direito
+volatile unsigned long pulseR = 0;
+volatile unsigned long lastR = 0;
+
+const int MIN_PULSE_WIDTH = 500;
+
+// ---------------------- TABELAS DE CALIBRAÇÃO ------------------
+float rpmTable[] = {0,   207, 295, 375, 445, 505, 560, 608, 645, 680, 713,
+                    735, 755, 776, 793, 808, 830, 843, 854, 865, 875, 910};
+
+int pwmTable[] = {0,   60,  70,  80,  90,  100, 110, 120, 130, 140, 150,
+                  160, 170, 180, 190, 200, 210, 220, 230, 240, 250, 255};
+
+const int tableSize = sizeof(rpmTable) / sizeof(rpmTable[0]);
+
+// ---------------------- FILTRO MÉDIA MÓVEL ---------------------
+const int MOV = 20;
+
+// Esquerdo
+float movL[MOV];
+int idxL = 0;
+float sumL = 0;
+float rpmL = 0;
+
+// Direito
+float movR[MOV];
+int idxR = 0;
+float sumR = 0;
+float rpmR = 0;
+
+// --------------------------- PID ----------------------------
+float Kp = 2.0, Ki = 0.5, Kd = 0.01;
+
+float eL = 0, iL = 0, dL = 0, lastEL = 0;
+float eR = 0, iR = 0, dR = 0, lastER = 0;
+
+float outL = 0;
+float outR = 0;
+
+long prevTime = 0;
+long sampleInterval = 40;
+
+// ----------------------- RAMPA ------------------------
+float targetRPM_L = 0;
+float targetRPM_R = 0;
+float rampRPM_L = 0;
+float rampRPM_R = 0;
+float acceleration = 10;
+const float BASE_RPM = 150.0; // Velocidade padrão se não for especificada
+
+// --------------------------- ISR ---------------------------
+void readL() {
+  unsigned long now = micros();
+  if (now - lastL > MIN_PULSE_WIDTH) {
+    pulseL++;
+    lastL = now;
+  }
+}
+
+void readR() {
+  unsigned long now = micros();
+  if (now - lastR > MIN_PULSE_WIDTH) {
+    pulseR++;
+    lastR = now;
+  }
+}
+
+// --------------------------- SETUP ---------------------------
+void setup() {
+  Serial.begin(115200);
+  
+  // IMPORTANTE: Define o tempo máximo de espera para ler o número após a letra.
+  // Sem isso, o robô pode travar por 1 segundo esperando input.
+  Serial.setTimeout(50); 
+
+  pinMode(IN1_L, OUTPUT);
+  pinMode(IN2_L, OUTPUT);
+  pinMode(EN_L, OUTPUT);
+  pinMode(ENC_L, INPUT_PULLUP);
+
+  pinMode(IN1_R, OUTPUT);
+  pinMode(IN2_R, OUTPUT);
+  pinMode(EN_R, OUTPUT);
+  pinMode(ENC_R, INPUT_PULLUP);
+
+  attachInterrupt(digitalPinToInterrupt(ENC_L), readL, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(ENC_R), readR, CHANGE);
+
+  for (int i = 0; i < MOV; i++) {
+    movL[i] = 0;
+    movR[i] = 0;
+  }
+
+  prevTime = millis();
+
+  Serial.println("Sistema iniciado.");
+  Serial.println("Comandos: F200 (Frente), B150 (Tras), L100 (Esq), R100 (Dir), S (Parar)");
+}
+
+// -------------------------- FUNÇÃO PWM --------------------------
+int rpmToPwm(float rpmTarget) {
+  float absRPM = abs(rpmTarget);
+
+  if (absRPM <= rpmTable[0])
+    return 0;
+
+  if (absRPM >= rpmTable[tableSize - 1]) {
+    int maxPWM = pwmTable[tableSize - 1];
+    return (rpmTarget > 0) ? maxPWM : -maxPWM;
+  }
+
+  for (int i = 0; i < tableSize - 1; i++) {
+    if (absRPM >= rpmTable[i] && absRPM <= rpmTable[i + 1]) {
+      float rR = rpmTable[i + 1] - rpmTable[i];
+      float rP = pwmTable[i + 1] - pwmTable[i];
+      float p = (absRPM - rpmTable[i]) / rR;
+      int pwm = pwmTable[i] + (rP * p);
+      return (rpmTarget > 0) ? pwm : -pwm;
+    }
+  }
+  return 0;
+}
+
+// --------------------- CONTROLE DO MOTOR ---------------------
+void motorL(int pwm) {
+  pwm = constrain(pwm, -255, 255);
+  if (pwm >= 0) {
+    digitalWrite(IN1_L, LOW);
+    digitalWrite(IN2_L, HIGH);
+    analogWrite(EN_L, pwm);
+  } else {
+    digitalWrite(IN1_L, HIGH);
+    digitalWrite(IN2_L, LOW);
+    analogWrite(EN_L, -pwm);
+  }
+}
+
+void motorR(int pwm) {
+  pwm = constrain(pwm, -255, 255);
+  if (pwm >= 0) {
+    digitalWrite(IN1_R, LOW);
+    digitalWrite(IN2_R, HIGH);
+    analogWrite(EN_R, pwm);
+  } else {
+    digitalWrite(IN1_R, HIGH);
+    digitalWrite(IN2_R, LOW);
+    analogWrite(EN_R, -pwm);
+  }
+}
+
+// --------------------------- LOOP ---------------------------
+void loop() {
+
+  // --- LEITURA DE COMANDO SERIAL ---
+  if (Serial.available()) {
+    char cmd = Serial.read(); // Lê a letra (F, B, L, R, S)
+
+    // Tenta ler um número logo em seguida. Ex: "F200" -> inputSpeed = 200.
+    // Se enviar só "F", inputSpeed será 0.
+    float inputSpeed = Serial.parseInt(); 
+
+    // Se a velocidade for 0, usamos a padrão BASE_RPM
+    if (inputSpeed == 0) inputSpeed = BASE_RPM;
+    
+    // Trava de segurança simples (opcional)
+    if (inputSpeed > 900) inputSpeed = 900; 
+
+    // Filtra caracteres de controle (Enter/Quebra de linha)
+    if (cmd != '\n' && cmd != '\r') {
+      switch (toupper(cmd)) {
+        case 'F': // Frente
+          targetRPM_L = inputSpeed;
+          targetRPM_R = inputSpeed;
+          Serial.print("Comando: FRENTE @ "); Serial.println(inputSpeed);
+          break;
+          
+        case 'B': // Trás (Velocidades negativas)
+          targetRPM_L = -inputSpeed;
+          targetRPM_R = -inputSpeed;
+          Serial.print("Comando: TRAS @ "); Serial.println(inputSpeed);
+          break;
+          
+        case 'L': // Giro Esquerda (Tank Turn: Esq tras, Dir frente)
+          targetRPM_L = -inputSpeed;
+          targetRPM_R = inputSpeed;
+          Serial.print("Comando: GIRO ESQUERDA @ "); Serial.println(inputSpeed);
+          break;
+          
+        case 'R': // Giro Direita (Tank Turn: Esq frente, Dir tras)
+          targetRPM_L = inputSpeed;
+          targetRPM_R = -inputSpeed;
+          Serial.print("Comando: GIRO DIREITA @ "); Serial.println(inputSpeed);
+          break;
+          
+        case 'S': // Parar
+          targetRPM_L = 0;
+          targetRPM_R = 0;
+          Serial.println("Comando: PARAR");
+          break;
+      }
+    }
+  }
+
+  unsigned long now = millis();
+
+  // --- LOOP DE CONTROLE (Executa a cada 40ms) ---
+  if (now - prevTime >= sampleInterval) {
+    long dt = now - prevTime;
+
+    // 1. Leitura segura dos encoders
+    noInterrupts();
+    unsigned long pL = pulseL;
+    pulseL = 0;
+    unsigned long pR = pulseR;
+    pulseR = 0;
+    interrupts();
+
+    // 2. Cálculo do RPM Instantâneo (Magnitude)
+    float instL = ((float)pL / PPR) * (60000.0 / dt);
+    float instR = ((float)pR / PPR) * (60000.0 / dt);
+
+    // 3. CORREÇÃO DE DIREÇÃO (Software)
+    // O encoder só conta pulsos positivos. Se o motor estiver recebendo 
+    // comando negativo (out < 0), invertemos o sinal da leitura.
+    if (outL < 0) instL = -instL;
+    if (outR < 0) instR = -instR;
+
+    // 4. Média Móvel (Suavização da leitura)
+    sumL -= movL[idxL];
+    movL[idxL] = instL;
+    sumL += instL;
+    idxL = (idxL + 1) % MOV;
+    rpmL = sumL / MOV;
+
+    sumR -= movR[idxR];
+    movR[idxR] = instR;
+    sumR += instR;
+    idxR = (idxR + 1) % MOV;
+    rpmR = sumR / MOV;
+
+    // 5. Rampa de Aceleração (Suavização do Setpoint)
+    // Motor Esquerdo
+    float diffL = targetRPM_L - rampRPM_L;
+    if (abs(diffL) > acceleration)
+      rampRPM_L += (diffL > 0 ? acceleration : -acceleration);
+    else
+      rampRPM_L = targetRPM_L;
+
+    // Motor Direito
+    float diffR = targetRPM_R - rampRPM_R;
+    if (abs(diffR) > acceleration)
+      rampRPM_R += (diffR > 0 ? acceleration : -acceleration);
+    else
+      rampRPM_R = targetRPM_R;
+
+    // 6. Feedforward (Predição baseada na tabela)
+    int ffL = rpmToPwm(rampRPM_L);
+    int ffR = rpmToPwm(rampRPM_R);
+
+    // 7. PID Motor Esquerdo
+    eL = rampRPM_L - rpmL;
+    // Anti-Windup: só acumula integral se o PWM não estiver no máximo
+    if (abs(outL) < 255) iL += eL * (dt / 1000.0);
+    dL = (eL - lastEL) / (dt / 1000.0);
+    outL = Kp * eL + Ki * iL + Kd * dL + ffL;
+    lastEL = eL;
+
+    // 8. PID Motor Direito
+    eR = rampRPM_R - rpmR;
+    // Anti-Windup
+    if (abs(outR) < 255) iR += eR * (dt / 1000.0);
+    dR = (eR - lastER) / (dt / 1000.0);
+    outR = Kp * eR + Ki * iR + Kd * dR + ffR;
+    lastER = eR;
+
+    // 9. Aplica Potência nos Motores
+    motorL((int)outL);
+    motorR((int)outR);
+
+    // 10. Debug Serial Plotter
+    // T_ = Target (Alvo), R_ = Real (Leitura)
+    Serial.print("T_L:"); Serial.print(targetRPM_L);
+    Serial.print(" R_L:"); Serial.print(rpmL);
+    Serial.print(" T_R:"); Serial.print(targetRPM_R);
+    Serial.print(" R_R:"); Serial.println(rpmR);
+
+    prevTime = now;
+  }
+}
