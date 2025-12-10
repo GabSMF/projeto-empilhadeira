@@ -4,13 +4,13 @@
 // Motor 1 (Esquerdo)
 #define IN1_L 22
 #define IN2_L 23
-#define EN_L 17
+#define EN_L 18
 #define ENC_L 26
 
 // Motor 2 (Direito)
 #define IN1_R 19
 #define IN2_R 21
-#define EN_R 18
+#define EN_R 17
 #define ENC_R 25
 
 // Motor Empilhadeira
@@ -225,6 +225,10 @@ void loop() {
       case 'S': // Parar
         targetRPM_L = 0;
         targetRPM_R = 0;
+        rampRPM_L = 0;
+        rampRPM_R = 0;
+        iL = 0;
+        iR = 0;
         motorLift(0);
         Serial.println("Comando: PARAR");
         break;
