@@ -13,6 +13,11 @@
 #define EN_R 18
 #define ENC_R 25
 
+// Motor Empilhadeira
+#define IN1_LIFT 33
+#define IN2_LIFT 32
+#define EN_LIFT 4
+
 // --------------------------- ENCODER ---------------------------
 const float PPR = 64.0;
 
@@ -39,7 +44,6 @@ const int tableSize = sizeof(rpmTable) / sizeof(rpmTable[0]);
 const int MOV = 20;
 int pwm_atualR = 0;
 int pwm_atualL = 0;
-
 
 // Esquerdo
 float movL[MOV];
@@ -104,6 +108,10 @@ void setup() {
   pinMode(EN_R, OUTPUT);
   pinMode(ENC_R, INPUT_PULLUP);
 
+  pinMode(IN1_LIFT, OUTPUT);
+  pinMode(IN2_LIFT, OUTPUT);
+  pinMode(EN_LIFT, OUTPUT);
+
   attachInterrupt(digitalPinToInterrupt(ENC_L), readL, CHANGE);
   attachInterrupt(digitalPinToInterrupt(ENC_R), readR, CHANGE);
 
@@ -114,7 +122,8 @@ void setup() {
 
   prevTime = millis();
 
-  Serial.println("Sistema iniciado — Controle Direcional (F, B, L, R, S)");
+  Serial.println(
+      "Sistema iniciado — Controle Direcional (F, B, L, R, S, U, D)");
 }
 
 // -------------------------- FUNÇÃO PWM --------------------------
@@ -170,6 +179,19 @@ void motorR(int pwm) {
   }
 }
 
+void motorLift(int pwm) {
+  pwm = constrain(pwm, -255, 255);
+  if (pwm >= 0) {
+    digitalWrite(IN1_LIFT, LOW);
+    digitalWrite(IN2_LIFT, HIGH);
+    analogWrite(EN_LIFT, pwm);
+  } else {
+    digitalWrite(IN1_LIFT, HIGH);
+    digitalWrite(IN2_LIFT, LOW);
+    analogWrite(EN_LIFT, -pwm);
+  }
+}
+
 // --------------------------- LOOP ---------------------------
 void loop() {
 
@@ -203,7 +225,16 @@ void loop() {
       case 'S': // Parar
         targetRPM_L = 0;
         targetRPM_R = 0;
+        motorLift(0);
         Serial.println("Comando: PARAR");
+        break;
+      case 'U': // Subir
+        motorLift(255);
+        Serial.println("Comando: SUBIR");
+        break;
+      case 'D': // Descer
+        motorLift(-255);
+        Serial.println("Comando: DESCER");
         break;
       default:
         // Opcional: Implementar ajuste fino de velocidade ou ignorar
@@ -294,8 +325,6 @@ void loop() {
     Serial.print(pwm_atualL);
     Serial.print(" out_R=");
     Serial.println(pwm_atualR);
-    
-    
 
     prevTime = now;
   }
