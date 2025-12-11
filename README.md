@@ -1,6 +1,12 @@
 # ENG4061 - Projeto Empilhadeira Autônoma
+![robo montado irl](3D-Models/images/robo-montado1.jpg)
+
+
 
 ## Peças 3D
+![robo inteiro 3d](3D-Models/images/robo-inteiro.png)
+
+
 ### 1. Tampa do Chassi
 
 A **tampa do chassi** é a peça central de interface entre o chassi metálico e os módulos impressos em 3D.
