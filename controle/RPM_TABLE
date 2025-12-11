@@ -1,0 +1,273 @@
+#include <Arduino.h>
+#include <WebServer.h>
+#include <WiFi.h>
+
+// --- CONFIGURAÇÕES WIFI ---
+const char *ssid = "Projeto";
+const char *password = "2022-11-07";
+
+WebServer server(80);
+
+// --- PINOS MOTORES DE TRAÇÃO ---
+// Motor 1 (Esquerdo)
+#define PINO_IN1 22
+#define PINO_IN2 23
+#define PINO_PWM 18
+
+// Motor 2 (Direito)
+#define PINO_IN3 19
+#define PINO_IN4 21
+#define PINO_PWM2 17
+
+// --- PINOS MOTOR LIFT (EMPILHADEIRA) ---
+#define PINO_IN5 33     // Controle sentido A (Lift)
+#define PINO_IN6 32     // Controle sentido B (Lift)
+#define PINO_PWM_LIFT 4 // Velocidade (Lift)
+
+// Variáveis globais
+char comandoAtual = 'P'; // Começa Parado
+int inputVelocidade = 0; // Valor recebido (0-255)
+
+// --- TABELAS DE CALIBRAÇÃO (PREENCHA AQUI COM SEUS DADOS) ---
+// Estes valores de PWM são os pontos de teste que você usou
+int pwmTable[] = { 0, 100, 150, 200, 255 }; 
+const int tableSize = sizeof(pwmTable) / sizeof(pwmTable[0]);
+
+// RPM MEDIDO MOTOR ESQUERDO (Exemplo fictício - Substitua pelos seus dados!)
+float rpmTableLeft[] = { 0, 445, 625, 710}; 
+
+// RPM MEDIDO MOTOR DIREITO (Exemplo fictício - O Direito geralmente é diferente)
+float rpmTableRight[] = { 0, 390, 594, 693}; 
+
+// RPM MÁXIMO COMUM (Para definir a escala de 0 a 100%)
+// Pegue o MENOR valor máximo entre os dois motores para garantir que o mais rápido espere o mais lento.
+float maxRpmComum = 850; 
+
+// Forward declarations
+void moverFrente(int inputVal);
+void moverTras(int inputVal);
+void virarEsquerda(int inputVal);
+void virarDireita(int inputVal);
+void pararRodas();
+void moverLiftCima(int pwm);
+void moverLiftBaixo(int pwm);
+void pararLift();
+void pararTudo();
+void executarComando();
+int getPwmForRpm(float targetRpm, float* rpmArray, int* pwmArray);
+
+// --- HANDLER DO SERVIDOR WEB ---
+void handlePostCommand() {
+  if (server.hasArg("plain")) {
+    String body = server.arg("plain");
+    body.trim(); 
+
+    Serial.println("Recebido via POST: " + body);
+
+    if (body.length() > 0) {
+      char cmd = body.charAt(0);
+      int novaVelocidade = 0;
+      if (body.length() > 1) {
+        novaVelocidade = body.substring(1).toInt();
+      }
+
+      comandoAtual = cmd;
+
+      if (novaVelocidade > 0) {
+        inputVelocidade = novaVelocidade;
+      }
+      
+      // Trava
+      if (inputVelocidade > 255) inputVelocidade = 255;
+      if (inputVelocidade < 0) inputVelocidade = 0;
+
+      executarComando();
+
+      server.send(200, "text/plain", "Cmd: " + String(comandoAtual) + " In: " + String(inputVelocidade));
+    } else {
+      server.send(400, "text/plain", "Comando vazio");
+    }
+  } else {
+    server.send(400, "text/plain", "POST sem corpo");
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  // Configura Pinos
+  pinMode(PINO_IN1, OUTPUT); pinMode(PINO_IN2, OUTPUT); pinMode(PINO_PWM, OUTPUT);
+  pinMode(PINO_IN3, OUTPUT); pinMode(PINO_IN4, OUTPUT); pinMode(PINO_PWM2, OUTPUT);
+  pinMode(PINO_IN5, OUTPUT); pinMode(PINO_IN6, OUTPUT); pinMode(PINO_PWM_LIFT, OUTPUT);
+
+  pararTudo();
+
+  // Conexão WiFi
+  WiFi.begin(ssid, password);
+  Serial.print("Conectando ao Wi-Fi...");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println("\nConectado! IP: ");
+  Serial.println(WiFi.localIP());
+
+  server.on("/command", HTTP_POST, handlePostCommand);
+  server.begin();
+  Serial.println("Servidor iniciado.");
+}
+
+void loop() { server.handleClient(); }
+
+// --- FUNÇÃO DE INTERPOLAÇÃO (O CÉREBRO DA CALIBRAÇÃO) ---
+// Esta função descobre qual PWM enviar para atingir um RPM específico
+int getPwmForRpm(float targetRpm, float* rpmArray, int* pwmArray) {
+  // Se o alvo for 0, retorna 0
+  if (targetRpm <= 0) return 0;
+  // Se for maior que o máximo da tabela, retorna o PWM máximo
+  if (targetRpm >= rpmArray[tableSize - 1]) return 255;
+
+  // Procura em qual intervalo o RPM alvo se encontra
+  for (int i = 0; i < tableSize - 1; i++) {
+    if (targetRpm >= rpmArray[i] && targetRpm <= rpmArray[i+1]) {
+      // Interpolação Linear: Regra de 3 para valores intermediários
+      float slope = (float)(pwmArray[i+1] - pwmArray[i]) / (rpmArray[i+1] - rpmArray[i]);
+      int calculatedPwm = pwmArray[i] + (int)((targetRpm - rpmArray[i]) * slope);
+      return constrain(calculatedPwm, 0, 255);
+    }
+  }
+  return 0; // Fallback
+}
+
+void executarComando() {
+  switch (comandoAtual) {
+  // --- TRAÇÃO ---
+  case 'F':      
+    pararLift(); 
+    moverFrente(inputVelocidade); // Agora passamos a entrada pura
+    Serial.println("RODAS: Frente Calibrado");
+    break;
+
+  case 'B': 
+    pararLift();
+    moverTras(inputVelocidade);
+    Serial.println("RODAS: Tras Calibrado");
+    break;
+
+  case 'L': 
+    pararLift();
+    virarEsquerda(inputVelocidade);
+    break;
+
+  case 'R': 
+    pararLift();
+    virarDireita(inputVelocidade);
+    break;
+
+  // --- LIFT (Lift não precisa de calibração complexa geralmente) ---
+  case 'U':        
+    pararRodas(); 
+    moverLiftCima(inputVelocidade);
+    break;
+
+  case 'D': 
+    pararRodas();
+    moverLiftBaixo(inputVelocidade);
+    break;
+
+  // --- PARADA ---
+  case 'S':
+  case 'P':
+    pararTudo();
+    inputVelocidade = 0;
+    break;
+  }
+}
+
+// ==========================================
+// --- FUNÇÕES MOTORAS CALIBRADAS ---
+// ==========================================
+
+void moverFrente(int inputVal) {
+  // 1. Converte a entrada (0-255) para um RPM Alvo
+  // Mapeia inputVal (0-255) para (0 - maxRpmComum)
+  float targetRpm = map(inputVal, 0, 255, 0, (int)maxRpmComum);
+
+  // 2. Descobre qual PWM cada motor precisa para atingir esse RPM
+  int pwmLeft = getPwmForRpm(targetRpm, rpmTableLeft, pwmTable);
+  int pwmRight = getPwmForRpm(targetRpm, rpmTableRight, pwmTable);
+
+  // Debug (opcional, remova se poluir o serial)
+  // Serial.print("TargetRPM: "); Serial.print(targetRpm);
+  // Serial.print(" -> PWM L: "); Serial.print(pwmLeft);
+  // Serial.print(" / PWM R: "); Serial.println(pwmRight);
+
+  // 3. Aplica os PWMs corrigidos
+  digitalWrite(PINO_IN1, HIGH);
+  digitalWrite(PINO_IN2, LOW);
+  analogWrite(PINO_PWM, pwmLeft);
+
+  digitalWrite(PINO_IN3, LOW);
+  digitalWrite(PINO_IN4, HIGH);
+  analogWrite(PINO_PWM2, pwmRight);
+}
+
+void moverTras(int inputVal) {
+  // Mesma lógica de frente
+  float targetRpm = map(inputVal, 0, 255, 0, (int)maxRpmComum);
+  int pwmLeft = getPwmForRpm(targetRpm, rpmTableLeft, pwmTable);
+  int pwmRight = getPwmForRpm(targetRpm, rpmTableRight, pwmTable);
+
+  digitalWrite(PINO_IN1, LOW);
+  digitalWrite(PINO_IN2, HIGH);
+  analogWrite(PINO_PWM, pwmLeft);
+
+  digitalWrite(PINO_IN3, HIGH);
+  digitalWrite(PINO_IN4, LOW);
+  analogWrite(PINO_PWM2, pwmRight);
+}
+
+// Para girar, geralmente não precisamos de calibração fina, mas podemos usar se quiser.
+// Aqui mantive "cru" ou você pode aplicar a mesma lógica. 
+// Se usar calibração no giro, lembre que a roda interna e externa giram opostas.
+void virarEsquerda(int pwm) {
+  digitalWrite(PINO_IN1, LOW);
+  digitalWrite(PINO_IN2, HIGH);
+  analogWrite(PINO_PWM, pwm); // Esquerda recua
+  digitalWrite(PINO_IN3, LOW);
+  digitalWrite(PINO_IN4, HIGH);
+  analogWrite(PINO_PWM2, pwm); // Direita avança
+}
+
+void virarDireita(int pwm) {
+  digitalWrite(PINO_IN1, HIGH);
+  digitalWrite(PINO_IN2, LOW);
+  analogWrite(PINO_PWM, pwm); // Esquerda avança
+  digitalWrite(PINO_IN3, HIGH);
+  digitalWrite(PINO_IN4, LOW);
+  analogWrite(PINO_PWM2, pwm); // Direita recua
+}
+
+void pararRodas() {
+  digitalWrite(PINO_IN1, LOW); digitalWrite(PINO_IN2, LOW); analogWrite(PINO_PWM, 0);
+  digitalWrite(PINO_IN3, LOW); digitalWrite(PINO_IN4, LOW); analogWrite(PINO_PWM2, 0);
+}
+
+// --- LIFT ---
+void moverLiftCima(int pwm) {
+  digitalWrite(PINO_IN5, HIGH); digitalWrite(PINO_IN6, LOW); analogWrite(PINO_PWM_LIFT, pwm);
+}
+
+void moverLiftBaixo(int pwm) {
+  digitalWrite(PINO_IN5, LOW); digitalWrite(PINO_IN6, HIGH); analogWrite(PINO_PWM_LIFT, pwm);
+}
+
+void pararLift() {
+  digitalWrite(PINO_IN5, LOW); digitalWrite(PINO_IN6, LOW); analogWrite(PINO_PWM_LIFT, 0);
+}
+
+void pararTudo() {
+  pararRodas();
+  pararLift();
+}
