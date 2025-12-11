@@ -10,6 +10,7 @@ A **tampa do chassi** é a peça central de interface entre o chassi metálico e
 - Possui **2 furos** para encaixe dos **suportes de bateria** (case das baterias).  
 - Na parte frontal, há um **ressalto/sobreposição** onde é feita a conexão com a **guia do elevador**, através de **3 furos** para parafusos que garantem a fixação da guia.
 
+![Tampa](3D-Models/images/tampa-chassi.png)
 ---
 
 ### 2. Guia do Garfo
@@ -24,6 +25,7 @@ A **guia do garfo** é responsável por conduzir o movimento vertical do garfo a
   - Encaixes para a **caixa da polia**, que abriga a polia e o eixo.  
 - Na lateral inferior existe uma região destinada à fixação do **motor lateral**, responsável por tracionar a polia do garfo (ver fotos do robô montado para referência).
 
+![Guia Garfo](3D-Models/images/guia-garfo.png)
 ---
 
 ### 3. Garfo
@@ -38,6 +40,8 @@ O **garfo** é o componente que efetivamente interage com o pallet, realizando o
 - A **altura do garfo**, na configuração atual, fica **acima da altura do pallet**, o que pode dificultar o encaixe ideal.  
 - A **espessura do garfo** ficou relativamente **fina**, podendo comprometer a robustez e a resistência mecânica.  
   - Melhorias sugeridas: reforçar a seção transversal e ajustar a altura para alinhar melhor com a altura do pallet.
+ 
+![Garfo](3D-Models/images/garfo.png)
 
 ---
 
@@ -58,6 +62,7 @@ A **caixa da polia** é montada na região superior da **guia do garfo** e abrig
 - Na tampa da caixa foi criado um encaixe inspirado nos **suportes de GoPro** para acoplar a **caixa da ESP32-CAM**.  
 - Entretanto, não foi considerado o caminho dos **eixos metálicos** que passam por essa região, o que dificultou a passagem do parafuso e da rosca para fixar a câmera no suporte.
 
+![caixa polia](3D-Models/images/sustentação-polia-com-extensor-de-correia-com-camera.png)
 ---
 
 ### 5. Caixa ESP32-CAM
@@ -72,6 +77,7 @@ A **caixa da ESP32-CAM** foi um dos pontos de maior acerto do projeto.
 - A longo prazo, as aberturas de ventilação atuais podem ser **insuficientes** para uso contínuo em cenários de maior aquecimento.  
   - Sugestão: ampliar a área de ventilação ou adicionar mais furos/grelhas na tampa.
 
+![Caixa ESP32-Cam](3D-Models/images/caixa-esp32-cam.png)
 ---
 
 ### 6. Case das Baterias
@@ -89,5 +95,6 @@ A **case das baterias** é responsável por acomodar as baterias de alimentaçã
   - Redução do uso de **fios soltos ou molas**.
   - Facilitação da montagem e manutenção do conjunto de baterias.
 
+![Case Bateria](3D-Models/images/case-bateria.png)
 ---
 
