@@ -1,17 +1,34 @@
 #include <Arduino.h>
 
+/*
+Nesse codigo tentamos aplicar PID nas rodas do motor para que as duas rodas
+se movam com a mesma velocidade. Tentamos ler os encoders e calcular a RPM
+para que o PID pudesse controlar a velocidade, e chegar ao  target aplicando uma rampa.
+Dessa forma a velocidade entre as duas rodas seria mais proxima, e o robo se 
+moveria em linha reta.
+
+Foi descartado pois os encoder eram muito imprecisos, nao era suficiente para tentar
+ajustar os erros entre os motores.
+*/
+
+
 // --------------------------- PINOS ---------------------------
 // Motor 1 (Esquerdo)
-#define IN1_L 7
-#define IN2_L 8
-#define EN_L 5
-#define ENC_L 3
+#define IN1_L 22
+#define IN2_L 23
+#define EN_L 18
+#define ENC_L 26
 
 // Motor 2 (Direito)
-#define IN1_R 12
-#define IN2_R 13
-#define EN_R 6
-#define ENC_R 2
+#define IN1_R 19
+#define IN2_R 21
+#define EN_R 17
+#define ENC_R 25
+
+// Motor Empilhadeira
+#define IN1_LIFT 33
+#define IN2_LIFT 32
+#define EN_LIFT 4
 
 // --------------------------- ENCODER ---------------------------
 const float PPR = 64.0;
@@ -37,6 +54,8 @@ const int tableSize = sizeof(rpmTable) / sizeof(rpmTable[0]);
 
 // ---------------------- FILTRO MÉDIA MÓVEL ---------------------
 const int MOV = 20;
+int pwm_atualR = 0;
+int pwm_atualL = 0;
 
 // Esquerdo
 float movL[MOV];
@@ -101,6 +120,10 @@ void setup() {
   pinMode(EN_R, OUTPUT);
   pinMode(ENC_R, INPUT_PULLUP);
 
+  pinMode(IN1_LIFT, OUTPUT);
+  pinMode(IN2_LIFT, OUTPUT);
+  pinMode(EN_LIFT, OUTPUT);
+
   attachInterrupt(digitalPinToInterrupt(ENC_L), readL, CHANGE);
   attachInterrupt(digitalPinToInterrupt(ENC_R), readR, CHANGE);
 
@@ -111,7 +134,8 @@ void setup() {
 
   prevTime = millis();
 
-  Serial.println("Sistema iniciado — Controle Direcional (F, B, L, R, S)");
+  Serial.println(
+      "Sistema iniciado — Controle Direcional (F, B, L, R, S, U, D)");
 }
 
 // -------------------------- FUNÇÃO PWM --------------------------
@@ -141,6 +165,7 @@ int rpmToPwm(float rpmTarget) {
 // --------------------- CONTROLE DO MOTOR ---------------------
 void motorL(int pwm) {
   pwm = constrain(pwm, -255, 255);
+  pwm_atualL = pwm;
   if (pwm >= 0) {
     digitalWrite(IN1_L, LOW);
     digitalWrite(IN2_L, HIGH);
@@ -154,6 +179,7 @@ void motorL(int pwm) {
 
 void motorR(int pwm) {
   pwm = constrain(pwm, -255, 255);
+  pwm_atualR = pwm;
   if (pwm >= 0) {
     digitalWrite(IN1_R, LOW);
     digitalWrite(IN2_R, HIGH);
@@ -162,6 +188,19 @@ void motorR(int pwm) {
     digitalWrite(IN1_R, HIGH);
     digitalWrite(IN2_R, LOW);
     analogWrite(EN_R, -pwm);
+  }
+}
+
+void motorLift(int pwm) {
+  pwm = constrain(pwm, -255, 255);
+  if (pwm >= 0) {
+    digitalWrite(IN1_LIFT, LOW);
+    digitalWrite(IN2_LIFT, HIGH);
+    analogWrite(EN_LIFT, pwm);
+  } else {
+    digitalWrite(IN1_LIFT, HIGH);
+    digitalWrite(IN2_LIFT, LOW);
+    analogWrite(EN_LIFT, -pwm);
   }
 }
 
@@ -186,19 +225,32 @@ void loop() {
         Serial.println("Comando: TRAS");
         break;
       case 'L': // Esquerda (Giro no eixo)
-        targetRPM_L = -BASE_RPM;
+        targetRPM_L = 0;
         targetRPM_R = BASE_RPM;
         Serial.println("Comando: ESQUERDA");
         break;
       case 'R': // Direita (Giro no eixo)
         targetRPM_L = BASE_RPM;
-        targetRPM_R = -BASE_RPM;
+        targetRPM_R = 0;
         Serial.println("Comando: DIREITA");
         break;
       case 'S': // Parar
         targetRPM_L = 0;
         targetRPM_R = 0;
+        rampRPM_L = 0;
+        rampRPM_R = 0;
+        iL = 0;
+        iR = 0;
+        motorLift(0);
         Serial.println("Comando: PARAR");
+        break;
+      case 'U': // Subir
+        motorLift(255);
+        Serial.println("Comando: SUBIR");
+        break;
+      case 'D': // Descer
+        motorLift(-255);
+        Serial.println("Comando: DESCER");
         break;
       default:
         // Opcional: Implementar ajuste fino de velocidade ou ignorar
@@ -285,6 +337,10 @@ void loop() {
     Serial.print(rpmL);
     Serial.print(" R_R=");
     Serial.println(rpmR);
+    Serial.print(" out_L=");
+    Serial.print(pwm_atualL);
+    Serial.print(" out_R=");
+    Serial.println(pwm_atualR);
 
     prevTime = now;
   }

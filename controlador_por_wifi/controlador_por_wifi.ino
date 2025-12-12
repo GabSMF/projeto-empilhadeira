@@ -2,6 +2,14 @@
 #include <WebServer.h>
 #include <WiFi.h>
 
+/*
+Codigo para que o servidor web receba os comandos via POST e os envie para o robo.
+Comandos como 'F200', 'S', 'U255' podem ser enviados pelo client do computador, qque serve como
+controle remoto.
+
+
+*/
+
 // --- CONFIGURAÇÕES WIFI ---
 const char *ssid = "Projeto";
 const char *password = "2022-11-07";

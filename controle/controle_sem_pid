@@ -1,5 +1,23 @@
 #include <Arduino.h>
 
+/*
+Nesse codigo foi implementado o controle sem PID, ou seja, 
+a velocidade foi controlada apenas pelo PWM, sem leitura de encoder.
+
+
+Criamos comandos basicos para a empilhadeira, como:
+- F (Frente)
+- B (Tras)
+- L (Esquerda)
+- R (Direita)
+- U (Subir)
+- D (Descer)
+- P (Parar)
+- S (Parar)
+podem ser testados na Serial Monitor. usamos como base para que o servidor em controlador_por_wifi 
+possa receber os mesmos comandos POST por wifi de um computador.
+*/
+
 // --- PINOS MOTORES DE TRAÇÃO ---
 // Motor 1 (Esquerdo)
 #define PINO_IN1 22

@@ -2,6 +2,17 @@
 #include <WebServer.h>
 #include <WiFi.h>
 
+/*
+Tentamos melhorar o movimento do robo, verificando manualmente com o tacometro
+o erro entre os motores e ajustando a tabela de calibração para que o robo
+se movesse em linha reta.
+
+Foi descartado pois o erro entre as rodas mudava quando o robo se movia no chao,
+ com o peso adicionado da empilhadeira, ao inves da bancada de teste.
+Nao foi viavel ajustar a diferenca de potencia das rodas no chao.
+*/
+
+
 // --- CONFIGURAÇÕES WIFI ---
 const char *ssid = "Projeto";
 const char *password = "2022-11-07";
